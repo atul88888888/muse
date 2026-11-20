@@ -1,0 +1,304 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  OWNER
+  ADMIN
+  MEMBER
+}
+
+enum LicensingStatus {
+  DRAFT
+  APPROVED
+  HOLD
+  REJECTED
+}
+
+enum ClearanceStatus {
+  GREEN_CLEARED
+  AMBER_PENDING
+  RED_NOT_LICENSABLE
+  BLUE_ORIGINAL
+}
+
+enum SubClearance {
+  NOT_APPLICABLE
+  PENDING
+  CONFIRMED
+}
+
+enum Verification {
+  UNVERIFIED
+  VERIFIED
+}
+
+enum OutreachStatus {
+  NEW
+  CONTACTED
+  REPLIED
+  DO_NOT_CONTACT
+}
+
+enum OpportunityStatus {
+  RESEARCHING
+  QUALIFIED
+  PITCHED
+  NEGOTIATING
+  WON
+  LOST
+}
+
+enum MatchResult {
+  PENDING
+  SENT
+  REPLIED
+  PASSED
+  LICENSED
+}
+
+enum MessageStatus {
+  DRAFT
+  APPROVED
+  SENT
+  FAILED
+}
+
+model Tenant {
+  id            String   @id @default(cuid())
+  name          String
+  slug          String   @unique
+  plan          String   @default("free")
+  createdAt     DateTime @default(now())
+
+  // Integrations - secrets stored encrypted at rest (see lib/crypto.js)
+  openaiApiKeyEnc String?
+  smtpHost        String?
+  smtpPort        Int?
+  smtpUser        String?
+  smtpPassEnc     String?
+  fromEmail       String?
+  fromName        String?
+
+  users         User[]
+  tracks        Track[]
+  contacts      Contact[]
+  companies     Company[]
+  opportunities Opportunity[]
+  matches       TrackMatch[]
+  outreach      OutreachMessage[]
+  deals         Deal[]
+}
+
+model User {
+  id           String   @id @default(cuid())
+  tenantId     String
+  tenant       Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  email        String
+  passwordHash String
+  name         String
+  role         Role     @default(OWNER)
+  createdAt    DateTime @default(now())
+
+  @@unique([tenantId, email])
+}
+
+model Track {
+  id               String          @id @default(cuid())
+  tenantId         String
+  tenant           Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  trackCode        String
+  title            String
+  artist           String
+  genres           String[]        @default([])
+  subgenres        String[]        @default([])
+  moods            String[]        @default([])
+  bpm              Int?
+  musicalKey       String?
+  vocals           String          @default("instrumental")
+  spotifyUrl       String?
+  soundcloudUrl    String?
+  wavMasterPath    String?
+  instrumentalPath String?
+  stemsPath        String?
+  isrc             String?
+  iswc             String?
+  aiDescription    String?
+  licensingStatus  LicensingStatus @default(DRAFT)
+  createdAt        DateTime        @default(now())
+  updatedAt        DateTime        @updatedAt
+
+  rights  RightsClearance?
+  matches TrackMatch[]
+  deals   Deal[]
+
+  @@unique([tenantId, trackCode])
+}
+
+model RightsClearance {
+  id       String @id @default(cuid())
+  tenantId String
+  trackId  String @unique
+  track    Track  @relation(fields: [trackId], references: [id], onDelete: Cascade)
+
+  masterOwner                 String?
+  compositionOwner             String?
+  producerAgreementConfirmed   Boolean       @default(false)
+  sampleUsed                   Boolean       @default(false)
+  sampleSource                 String?
+  sampleOwner                  String?
+  masterSampleClearance        SubClearance  @default(NOT_APPLICABLE)
+  compositionClearance         SubClearance  @default(NOT_APPLICABLE)
+  sampleLicenseDocPath         String?
+  territoryRestrictions        String?
+  commercialUsePermitted       Boolean       @default(false)
+  syncUsePermitted              Boolean       @default(false)
+  exclusiveLicensingPermitted  Boolean       @default(false)
+
+  // AI only ever writes this suggestion field - never the final status
+  aiSuggestedStatus   ClearanceStatus?
+  aiSuggestionNotes   String?
+
+  // Final status may only be set by an authenticated human via the approve endpoint
+  finalStatus         ClearanceStatus?
+  finalApprovedByUserId String?
+  finalApprovedAt      DateTime?
+
+  updatedAt DateTime @updatedAt
+}
+
+model Company {
+  id                     String   @id @default(cuid())
+  tenantId               String
+  tenant                 Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name                   String
+  website                String?
+  industry               String?
+  country                String?
+  productionType         String?
+  genresUsed             String?
+  previousProductions    String?
+  previousPlacements     String?
+  submissionInstructions String?
+  submissionUrl          String?
+  preferredContactMethod String?
+  lastResearchedAt       DateTime?
+  createdAt              DateTime @default(now())
+
+  contacts      Contact[]
+  opportunities Opportunity[]
+  matches       TrackMatch[]
+}
+
+model Contact {
+  id             String         @id @default(cuid())
+  tenantId       String
+  tenant         Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  companyId      String?
+  company        Company?       @relation(fields: [companyId], references: [id])
+  firstName      String
+  lastName       String?
+  jobTitle       String?
+  industry       String?
+  email          String?
+  linkedin       String?
+  website        String?
+  country        String?
+  source         String?
+  foundDate      DateTime?
+  verification   Verification   @default(UNVERIFIED)
+  outreachStatus OutreachStatus @default(NEW)
+  doNotContact   Boolean        @default(false)
+  createdAt      DateTime       @default(now())
+
+  matches  TrackMatch[]
+  outreach OutreachMessage[]
+}
+
+model Opportunity {
+  id               String            @id @default(cuid())
+  tenantId         String
+  tenant           Tenant            @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  companyId        String?
+  company          Company?          @relation(fields: [companyId], references: [id])
+  production       String
+  buyer            String?
+  musicRequirement String?
+  deadline         DateTime?
+  budget           String?
+  usage            String?
+  territory        String?
+  exclusive        String?
+  status           OpportunityStatus @default(RESEARCHING)
+  createdAt        DateTime          @default(now())
+
+  matches TrackMatch[]
+}
+
+model TrackMatch {
+  id            String       @id @default(cuid())
+  tenantId      String
+  tenant        Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  trackId       String
+  track         Track        @relation(fields: [trackId], references: [id], onDelete: Cascade)
+  contactId     String?
+  contact       Contact?     @relation(fields: [contactId], references: [id])
+  companyId     String?
+  company       Company?     @relation(fields: [companyId], references: [id])
+  opportunityId String?
+  opportunity   Opportunity? @relation(fields: [opportunityId], references: [id])
+
+  aiScore        Int?
+  aiReason       String?
+  rightsEligible Boolean     @default(false)
+  humanApproved  Boolean     @default(false)
+  pitchDate      DateTime?
+  result         MatchResult @default(PENDING)
+  createdAt      DateTime    @default(now())
+}
+
+model OutreachMessage {
+  id           String        @id @default(cuid())
+  tenantId     String
+  tenant       Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  contactId    String
+  contact      Contact       @relation(fields: [contactId], references: [id])
+  trackIds     String[]      @default([])
+  subject      String
+  body         String
+  status       MessageStatus @default(DRAFT)
+  sentAt       DateTime?
+  response     String?
+  followUpDate DateTime?
+  optOut       Boolean       @default(false)
+  createdAt    DateTime      @default(now())
+}
+
+model Deal {
+  id                     String   @id @default(cuid())
+  tenantId               String
+  tenant                 Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  trackId                String
+  track                  Track    @relation(fields: [trackId], references: [id])
+  clientName             String
+  production             String?
+  licenseType            String?
+  masterFee              Float?
+  publishingFee          Float?
+  territory              String?
+  media                  String?
+  licenseDuration        String?
+  exclusivity            Boolean  @default(false)
+  contractPath           String?
+  invoiceAmount          Float?
+  paymentReceived        Boolean  @default(false)
+  proRegistrationRef     String?
+  royaltyReportingStatus String?
+  royaltiesReceived      Float?   @default(0)
+  createdAt              DateTime @default(now())
+}
